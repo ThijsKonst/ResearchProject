@@ -7,7 +7,7 @@ def parser(x, y):
         return datetime.strptime(x + y, '%Y%m%d%H') + timedelta(days=1)
     return datetime.strptime(x + y, '%Y%m%d%H')
 
-energyframe = read_csv('data/2015-2016.csv').append(read_csv('data/2016-2017.csv'))
+energyframe = read_csv('data/2015-2016.csv').append(read_csv('data/2016-2017.csv')).append(read_csv('data/2017-2018.csv'))
 # Removing daylight saving hours from dataset
 energyframe = energyframe.dropna()
 energyframe.reset_index(inplace = True, drop=True)
@@ -26,7 +26,7 @@ dataset = dataset.drop("STN", axis=1)
 dataset.index.name ='date'
 # Only selecting the needed years of data
 mask = (dataset['date'] > '2015-01-01') & (dataset['date'] <
-                                           '2017-01-01 01:00:00')
+                                           '2018-01-01 01:00:00')
 
 dataset = dataset[mask]
 dataset.reset_index(inplace = True, drop=True)
@@ -36,7 +36,7 @@ print(dataset)
 # Merging the two datasets :)
 dataset = dataset.merge(energyframe[["AT","DAF"]], left_index=True, right_index=True)
 
-dataset.to_csv("data/joined_data_2015-2017.csv")
+dataset.to_csv("data/joined_data_2015-2018.csv")
 
 energyframe = read_csv('data/2018-2019.csv')
 # Removing daylight saving hours from dataset

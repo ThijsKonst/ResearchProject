@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
+import datetime as dt
 import os
 
 checkpoint_path = "models/cp.ckpt"
@@ -20,17 +21,18 @@ checkpoint_dir = os.path.dirname(checkpoint_path)
 def main():
 
     ## LOADING AND SCALING DATA ##
-    dataframe = pd.read_csv("data/joined_data_2015-2017.csv", index_col=1)
+    dataframe = pd.read_csv("data/joined_data_2015-2018.csv", parse_dates = ['date'],index_col=1)
     testdataframe = pd.read_csv("data/test_data_2018-2019.csv", index_col=1)
 
     dates = dataframe.index
     ref_forecasts = dataframe['DAF']
-
-    variables = dataframe[["HH", "FH", "DD", "T", "AT"]]
+    dataframe = dataframe.reset_index()
+    dataframe['WD'] = dataframe['date'].dt.dayofweek
+    variables = dataframe[["HH", "WD", "FH", "DD", "T", "AT"]]
     columns = list(variables)
     df = dataframe[columns].values.astype('float32')
 
-    n_train_hours = 104 * 168
+    n_train_hours = 130 * 168
 
     df_train = df[:n_train_hours, :]
     df_test = df[n_train_hours:, :]
@@ -62,7 +64,7 @@ def main():
     model.compile(optimizer='adam', loss='mae')
     model.summary()
 
-    history = model.fit(train_X, train_Y, epochs=150, batch_size=24,
+    history = model.fit(train_X, train_Y, epochs=500, batch_size=24,
                         validation_data = (test_X, test_Y),
                         verbose=2, shuffle=False, callbacks=[cp_callback])
 
@@ -71,14 +73,14 @@ def main():
 
     test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
 
-    inv_forecast = np.concatenate((test_X[:, -4:], forecast), axis=1)
+    inv_forecast = np.concatenate((test_X[:, -5:], forecast), axis=1)
     inv_forecast = scaler.inverse_transform(inv_forecast)
-    inv_forecast = inv_forecast[:,4]
+    inv_forecast = inv_forecast[:,5]
 
     test_Y = test_Y.reshape((len(test_Y), 1))
-    inv_y = np.concatenate((test_X[:, -4:], test_Y), axis=1)
+    inv_y = np.concatenate((test_X[:, -5:], test_Y), axis=1)
     inv_y = scaler.inverse_transform(inv_y)
-    inv_y = inv_y[:,4]
+    inv_y = inv_y[:,5]
 
     rmse = sqrt(mean_squared_error(inv_y, inv_forecast))
     reference_rmse = sqrt(mean_squared_error(inv_y, ref_forecasts[n_train_hours:]))
@@ -87,9 +89,9 @@ def main():
 
     dataframe_graph = pd.DataFrame({'date' : dates[n_train_hours:], 'real' : inv_y, 'forecast' : inv_forecast, 'ref_forecast' : ref_forecasts[n_train_hours:]})
 
-    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['real'], legend="full", label="Real")
-    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['forecast'], legend="full", label="Forecast")
-    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['ref_forecast'], legend="full", label="ref_Forecast")
+    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['real'], legend="full", label="Real [MW]")
+    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['forecast'], legend="full", label="Forecast [MW]")
+    sns.lineplot(x= dataframe_graph['date'], y=dataframe_graph['ref_forecast'], legend="full", label="ref_Forecast [MW]")
     plt.show()
 
 
