@@ -8,19 +8,20 @@ import time
 import ModelTrunk
 
 from matplotlib import pyplot as plt
-from tensorflow.keras.layers import Dense, LSTM, Input
+from tensorflow.keras.layers import Dense, LSTM, Input, Dropout
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.callbacks import LearningRateScheduler
+from tensorflow.keras.callbacks import LearningRateScheduler, EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from math import sqrt
 from sklearn.metrics import mean_squared_error
 
 matplotlib.use('TkAgg')
 
-checkpoint_path = "models/cp.ckpt"
-checkpoint_dir = os.path.dirname(checkpoint_path)
+attention = False
+print("Num GPUs Available: ", tf.config.list_physical_devices())
 
-attention = True
+sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
+
 gpu_devices = tf.config.experimental.list_physical_devices('GPU')
 for device in gpu_devices:
     tf.config.experimental.set_memory_growth(device, True)
@@ -36,11 +37,14 @@ def main():
     dataframe = dataframe.reset_index()
     dataframe['WD'] = dataframe['date'].dt.dayofweek
     dataframe['MM'] = dataframe['date'].dt.month
-    variables = dataframe[["HH", "WD", "MM", "FH", "DD", "T", "DAP", "AT"]]
+    variables = dataframe[["HH", "WD", "MM", "FH", "DD", "T", "AT"]]
     columns = list(variables)
     df = dataframe[columns].values.astype('float32')
+    df = df[8784:, :]
+    ref_forecasts = ref_forecasts[8784:]
+    dates = dates[8784:]
 
-    n_train_hours = 35064 - 8784
+    n_train_hours = 26280 - 8784
 
     df_train = df[:n_train_hours, :]
     df_test = df[n_train_hours:, :]
@@ -66,16 +70,15 @@ def main():
         x = Dense(1)(x)
 
         model = Model(inp, x)
-        model.compile(optimizer='adam', loss='mse')
     else:
         model = Sequential()
-        model.add(LSTM(64, input_shape=(train_X.shape[1], train_X.shape[2],),
+        model.add(LSTM(128, input_shape=(train_X.shape[1], train_X.shape[2],),
                   return_sequences=True))
-        model.add(LSTM(32))
+        model.add(Dropout(0.2))
+        model.add(LSTM(64))
         model.add(Dense(1))
 
-        model.compile(optimizer='rmsprop', loss='mse')
-
+    model.compile(optimizer='adam', loss='mse')
     model.summary()
 
     def lr_scheduler(epoch, lr, warmup_epochs=15, decay_epochs=150, initial_lr=1e-6, base_lr=1e-3, min_lr=5e-5):
@@ -86,23 +89,22 @@ def main():
         if epoch > warmup_epochs and epoch < warmup_epochs+decay_epochs:
             pct = 1 - ((epoch - warmup_epochs) / decay_epochs)
             return ((base_lr - min_lr) * pct) + min_lr
-
         return min_lr
 
-    callbacks = [LearningRateScheduler((lr_scheduler), verbose=0)]
+    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=20)
+    if attention:
+        callbacks = [LearningRateScheduler((lr_scheduler), verbose=1)]
+    else:
+        callbacks = [es]
 
     history = model.fit(train_X, train_Y, epochs=200, batch_size=24,
               validation_data=(test_X, test_Y), verbose=1, shuffle=False, callbacks=callbacks)
-    if not attention:
+
+    if attention:
+        model.save_weights("models/attention.h5")
+    else:
         model.save("models/lstm.h5")
 
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
     # summarize history for loss
     plt.plot(history.history['loss'])
     plt.plot(history.history['val_loss'])
@@ -117,15 +119,15 @@ def main():
     test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
 
     print(forecast.shape)
-    inv_forecast = np.concatenate((test_X[:, -7:], forecast), axis=1)
+    inv_forecast = np.concatenate((test_X[:, -6:], forecast), axis=1)
     print(inv_forecast.shape)
     inv_forecast = scaler.inverse_transform(inv_forecast)
-    inv_forecast = inv_forecast[:, 7]
+    inv_forecast = inv_forecast[:, 6]
 
     test_Y = test_Y.reshape((len(test_Y), 1))
-    inv_y = np.concatenate((test_X[:, -7:], test_Y), axis=1)
+    inv_y = np.concatenate((test_X[:, -6:], test_Y), axis=1)
     inv_y = scaler.inverse_transform(inv_y)
-    inv_y = inv_y[:, 7]
+    inv_y = inv_y[:, 6]
 
     rmse = sqrt(mean_squared_error(inv_y, inv_forecast))
     reference_rmse = sqrt(mean_squared_error(inv_y,
@@ -153,8 +155,8 @@ def main():
                  legend="full", label="Real [MW]")
     sns.lineplot(x=dataframe_graph['date'], y=dataframe_graph['forecast'],
                  legend="full", label="Forecast [MW]")
-    sns.lineplot(x=dataframe_graph['date'], y=dataframe_graph['ref_forecast'],
-                 legend="full", label="ref_Forecast [MW]")
+    #sns.lineplot(x=dataframe_graph['date'], y=dataframe_graph['ref_forecast'],
+    #             legend="full", label="ref_Forecast [MW]")
     plt.show()
 
 
