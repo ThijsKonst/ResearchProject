@@ -1,6 +1,11 @@
 # ResearchProject
 codebase for research project
 
-To use the pipenv execute:
+To use the virtual environment execute:
 
-```#source bin/activate```
+```
+python3 -m venv . 
+source bin/activate
+python3 -m pip install -r requirements.txt
+```
+
