@@ -4,8 +4,6 @@ import numpy as np
 import tensorflow as tf
 import matplotlib
 import time
-import ModelTrunk
-import peel_the_layer
 
 import keras.applications
 import keras.datasets
@@ -15,8 +13,8 @@ import keras.wrappers
 
 from matplotlib import pyplot as plt
 from keras.layers import Dense, LSTM, Input, Dropout, Bidirectional
-from keras.models import Sequential, Model
-from keras.callbacks import LearningRateScheduler
+from keras.models import Sequential
+from keras.callbacks import LearningRateScheduler, EarlyStopping
 from keras_self_attention import SeqSelfAttention
 from sklearn.preprocessing import MinMaxScaler
 from math import sqrt
@@ -34,6 +32,7 @@ for device in gpu_devices:
 
 
 def main(attention, bidi, show):
+
     start_time = time.time()
     # LOADING AND SCALING DATA ##
     dataframe = pd.read_csv("data/joined_data_2015-2019.csv",
@@ -47,11 +46,8 @@ def main(attention, bidi, show):
     variables = dataframe[["HH", "WD", "FH", "DD", "T", "AT"]]
     columns = list(variables)
     df = dataframe[columns].values.astype('float32')
-    df = df[8784:, :]
-    ref_forecasts = ref_forecasts[8784:]
-    dates = dates[8784:]
 
-    n_train_hours = 26280 - 8784
+    n_train_hours = 26280
 
     df_train = df[:n_train_hours, :]
     df_test = df[n_train_hours:, :]
@@ -61,8 +57,8 @@ def main(attention, bidi, show):
     test = scaler.transform(df_test)
 
     # TRAINING
-    train_X, train_Y = train[:, :-1], train[:, -1]
-    test_X, test_Y = test[:, :-1], test[:, -1]
+    train_X, train_Y = train[:-24, :], train[24:, -1]
+    test_X, test_Y = test[:-24, :], test[24:, -1]
 
     train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
     test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
@@ -77,7 +73,7 @@ def main(attention, bidi, show):
     if attention:
         model.add(SeqSelfAttention(attention_activation='sigmoid'))
 
-    model.add(Dropout(0.1))
+    model.add(Dropout(0.3))
     if bidi:
         model.add(Bidirectional(LSTM(64)))
     else:
@@ -97,10 +93,12 @@ def main(attention, bidi, show):
             return ((base_lr - min_lr) * pct) + min_lr
         return min_lr
 
+    #es = EarlyStopping(monitor="val_loss", verbose=1, patience=20)
+
     callbacks = [LearningRateScheduler((lr_scheduler), verbose=1)]
 
-    history = model.fit(train_X, train_Y, epochs=200, batch_size=48,
-              validation_data=(test_X, test_Y), verbose=1, shuffle=False, callbacks=callbacks)
+    history = model.fit(train_X, train_Y, epochs=200, batch_size=24,
+              validation_split=0.33, verbose=1, shuffle=False, callbacks=callbacks)
 
     if show:
         # summarize history for loss
@@ -112,7 +110,18 @@ def main(attention, bidi, show):
         plt.legend(['train', 'test'], loc='upper left')
         plt.show()
 
-    forecast = model.predict(test_X)
+    # FORECASTING THE DATA DAY BY DAY
+
+    n_days = int(len(test_X) / 24)
+
+    forecast = np.array([])
+
+    for i in range(n_days):
+        test_batch = test_X[(i*24):((i+1)*24), :]
+        prediction = model.predict(test_batch)
+        forecast = np.append(forecast, prediction)
+
+    forecast = forecast.reshape(forecast.shape[0], -1)
 
     test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
 
@@ -125,27 +134,36 @@ def main(attention, bidi, show):
     inv_y = scaler.inverse_transform(inv_y)
     inv_y = inv_y[:, 5]
 
+    # SCORING METHODS
+
     def mean_absolute_percentage_error(y_true, y_pred):
         y_true, y_pred = np.array(y_true), np.array(y_pred)
         return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
 
     rmse = sqrt(mean_squared_error(inv_y, inv_forecast))
     reference_rmse = sqrt(mean_squared_error(inv_y,
-                                             ref_forecasts[n_train_hours:]))
+                                             ref_forecasts[n_train_hours+24:]))
 
     pcc = np.corrcoef(inv_y, inv_forecast)
-    reference_pcc = np.corrcoef(inv_y, ref_forecasts[n_train_hours:])
+    reference_pcc = np.corrcoef(inv_y, ref_forecasts[n_train_hours+24:])
 
     mape = mean_absolute_percentage_error(inv_y, inv_forecast)
-    reference_mape = mean_absolute_percentage_error(inv_y, ref_forecasts[n_train_hours:])
+    reference_mape = mean_absolute_percentage_error(inv_y, ref_forecasts[n_train_hours+24:])
 
     currentTime = str(int(time.time()))
-    if attention:
+    if attention and bidi:
+        f = open("results/Test_results_BiLSTM_attention_" + currentTime, "x")
+        pd.DataFrame(history.history).to_csv("results/Loss_BiLSTM_attention.csv")
+    elif attention:
         f = open("results/Test_results_attention_" + currentTime, "x")
+        pd.DataFrame(history.history).to_csv("results/Loss_attention.csv")
     elif bidi:
         f = open("results/Test_results_BiLSTM_" + currentTime, "x")
+        pd.DataFrame(history.history).to_csv("results/Loss_BiLSTM.csv")
     else:
         f = open("results/Test_results_LSTM_" + currentTime, "x")
+        pd.DataFrame(history.history).to_csv("results/Loss_LSTM.csv")
+
 
     print("written at " + currentTime)
     f.write('Test RMSE: %.3f \n' % rmse)
@@ -155,10 +173,10 @@ def main(attention, bidi, show):
     f.write('Test MAPE: %.3f \n' % mape)
     f.write('Reference MAPE: %.3f \n' % reference_mape)
 
-    dataframe_graph = pd.DataFrame({'date': dates[n_train_hours:],
+    dataframe_graph = pd.DataFrame({'date': dates[n_train_hours+24:],
                                     'real': inv_y, 'forecast': inv_forecast,
                                     'ref_forecast':
-                                    ref_forecasts[n_train_hours:]})
+                                    ref_forecasts[n_train_hours+24:]})
 
     if attention and bidi:
         dataframe_graph.to_csv('results/bilstm_attention/BiLSTM_prediction_'+ currentTime +'.csv')
@@ -184,7 +202,8 @@ def Average(lst):
     return sum(lst)/len(lst)
 
 def Test(modelName, attention, bidi, times):
-    with open("aggresults-" + modelName, "x") as f:
+    # Running the tests "times" times.
+    with open("aggresults-test3-" + modelName, "x") as f:
         pccArray, rmseArray, mapeArray, timeArray = [],[],[],[]
         for i in range(times):
             result_pcc, result_rmse, result_mape, result_time = main(attention, bidi, False)
@@ -198,10 +217,10 @@ def Test(modelName, attention, bidi, times):
         mape = Average(mapeArray)
         exec_time = Average(timeArray)
 
-        f.write(str(pccArray))
-        f.write(str(rmseArray))
-        f.write(str(mapeArray))
-        f.write(str(timeArray))
+        f.write(str(pccArray) + "\n")
+        f.write(str(rmseArray)+ "\n")
+        f.write(str(mapeArray)+ "\n")
+        f.write(str(timeArray)+ "\n")
 
         f.write(modelName + " agg pcc: %.6f \n" % pcc)
         f.write(modelName + " agg RMSE: %.6f \n" % rmse)
@@ -210,7 +229,7 @@ def Test(modelName, attention, bidi, times):
         f.write("\n")
 
 if __name__ == "__main__":
-    Test("AttentionBiLSTM", True, True, 1)
-    Test("AttentionLSTM", True, False, 1)
-    Test("BiLSTM", False, True, 1)
-    Test("LSTM", False, False, 1)
+    Test("AttentionBiLSTM", True, True, 10)
+    Test("AttentionLSTM", True, False, 10)
+    Test("BiLSTM", False, True, 10)
+    Test("LSTM", False, False, 10)

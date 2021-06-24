@@ -9,7 +9,7 @@ def parser(x, y):
     return datetime.strptime(x + y, '%Y%m%d%H')
 
 
-energyframe = read_csv('data/2015-2016.csv').append(read_csv('data/2016-2017.csv')).append(read_csv('data/2017-2018.csv'))
+energyframe = read_csv('data/2018-2019.csv')
 # Removing daylight saving hours from dataset
 energyframe = energyframe.dropna()
 energyframe.reset_index(inplace=True, drop=True)
@@ -18,7 +18,7 @@ energyframe.reset_index(inplace=True, drop=True)
 energyframe = energyframe.groupby(energyframe.index // 4).sum()
 print(energyframe)
 
-priceframe = read_csv('data/prices2015-2016.csv').append(read_csv('data/prices2016-2017.csv')).append(read_csv('data/prices2017-2018.csv'))
+priceframe = read_csv('data/prices2018-2019.csv')
 priceframe = priceframe.drop("BZN|NL", axis=1)
 priceframe.reset_index(inplace=True, drop=True)
 priceframe = priceframe.fillna(priceframe.mean(axis=0))
@@ -34,8 +34,8 @@ dataset = dataset.drop("STN", axis=1)
 
 dataset.index.name = 'date'
 # Only selecting the needed years of data
-mask = (dataset['date'] > '2015-01-01') & (dataset['date'] <
-                                           '2018-01-01 01:00:00')
+mask = (dataset['date'] > '2019-01-01') & (dataset['date'] <
+                                           '2020-01-01 01:00:00')
 
 dataset = dataset[mask]
 dataset.reset_index(inplace=True, drop=True)
@@ -46,10 +46,5 @@ print(dataset)
 dataset = dataset.merge(energyframe[["AT","DAF"]], left_index=True, right_index=True)
 dataset = dataset.merge(priceframe[["Day-ahead Price [EUR/MWh]"]], left_index=True, right_index=True)
 
-train_hours = (26280 - 8784)
 
-dataset_train = dataset.iloc[:train_hours, :]
-dataset_test = dataset.iloc[train_hours:, :]
-
-dataset_train.to_csv("data/train.csv")
-dataset_test.to_csv("data/test.csv")
+dataset.to_csv("data/validData.csv")
