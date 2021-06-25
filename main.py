@@ -13,6 +13,7 @@ import keras.wrappers
 
 from matplotlib import pyplot as plt
 from keras.layers import Dense, LSTM, Input, Dropout, Bidirectional
+from keras.regularizers import l2
 from keras.models import Sequential
 from keras.callbacks import LearningRateScheduler, EarlyStopping
 from keras_self_attention import SeqSelfAttention
@@ -47,20 +48,25 @@ def main(attention, bidi, show):
     columns = list(variables)
     df = dataframe[columns].values.astype('float32')
 
-    n_train_hours = 26280
+    n_train_hours = 26280-8760
+    n_valid_hours = 8760
 
     df_train = df[:n_train_hours, :]
-    df_test = df[n_train_hours:, :]
+    df_valid = df[n_train_hours:(n_train_hours+n_valid_hours), :]
+    df_test = df[(n_train_hours+n_valid_hours):, :]
 
     scaler = MinMaxScaler().fit(df_train)
     train = scaler.transform(df_train)
+    valid = scaler.transform(df_valid)
     test = scaler.transform(df_test)
 
     # TRAINING
     train_X, train_Y = train[:-24, :], train[24:, -1]
+    valid_X, valid_Y = valid[:-24, :], valid[24:, -1]
     test_X, test_Y = test[:-24, :], test[24:, -1]
 
     train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
+    valid_X = valid_X.reshape((valid_X.shape[0], 1, valid_X.shape[1]))
     test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
 
     # MODEL
@@ -75,10 +81,10 @@ def main(attention, bidi, show):
 
     model.add(Dropout(0.3))
     if bidi:
-        model.add(Bidirectional(LSTM(64)))
+        model.add(Bidirectional(LSTM(32)))
     else:
-        model.add(LSTM(64))
-    model.add(Dense(1))
+        model.add(LSTM(32))
+    model.add(Dense(1, kernel_regularizer=l2(0.01)))
 
     model.compile(optimizer='adam', loss='mse')
     model.summary()
@@ -97,8 +103,8 @@ def main(attention, bidi, show):
 
     callbacks = [LearningRateScheduler((lr_scheduler), verbose=1)]
 
-    history = model.fit(train_X, train_Y, epochs=200, batch_size=24,
-              validation_split=0.33, verbose=1, shuffle=False, callbacks=callbacks)
+    history = model.fit(train_X, train_Y, epochs=50, batch_size=24,
+              validation_data=(valid_X, valid_Y), verbose=1, shuffle=False, callbacks=callbacks)
 
     if show:
         # summarize history for loss
@@ -142,13 +148,13 @@ def main(attention, bidi, show):
 
     rmse = sqrt(mean_squared_error(inv_y, inv_forecast))
     reference_rmse = sqrt(mean_squared_error(inv_y,
-                                             ref_forecasts[n_train_hours+24:]))
+                                             ref_forecasts[(n_train_hours+n_valid_hours+24):]))
 
     pcc = np.corrcoef(inv_y, inv_forecast)
-    reference_pcc = np.corrcoef(inv_y, ref_forecasts[n_train_hours+24:])
+    reference_pcc = np.corrcoef(inv_y, ref_forecasts[n_train_hours+n_valid_hours+24:])
 
     mape = mean_absolute_percentage_error(inv_y, inv_forecast)
-    reference_mape = mean_absolute_percentage_error(inv_y, ref_forecasts[n_train_hours+24:])
+    reference_mape = mean_absolute_percentage_error(inv_y, ref_forecasts[n_train_hours+n_valid_hours+24:])
 
     currentTime = str(int(time.time()))
     if attention and bidi:
@@ -173,10 +179,10 @@ def main(attention, bidi, show):
     f.write('Test MAPE: %.3f \n' % mape)
     f.write('Reference MAPE: %.3f \n' % reference_mape)
 
-    dataframe_graph = pd.DataFrame({'date': dates[n_train_hours+24:],
+    dataframe_graph = pd.DataFrame({'date': dates[n_train_hours+n_valid_hours+24:],
                                     'real': inv_y, 'forecast': inv_forecast,
                                     'ref_forecast':
-                                    ref_forecasts[n_train_hours+24:]})
+                                    ref_forecasts[n_train_hours+n_valid_hours+24:]})
 
     if attention and bidi:
         dataframe_graph.to_csv('results/bilstm_attention/BiLSTM_prediction_'+ currentTime +'.csv')
@@ -206,7 +212,7 @@ def Test(modelName, attention, bidi, times):
     with open("aggresults-test3-" + modelName, "x") as f:
         pccArray, rmseArray, mapeArray, timeArray = [],[],[],[]
         for i in range(times):
-            result_pcc, result_rmse, result_mape, result_time = main(attention, bidi, False)
+            result_pcc, result_rmse, result_mape, result_time = main(attention, bidi, True)
             pccArray.append(result_pcc[0,1])
             rmseArray.append(result_rmse)
             mapeArray.append(result_mape)
@@ -229,7 +235,7 @@ def Test(modelName, attention, bidi, times):
         f.write("\n")
 
 if __name__ == "__main__":
-    Test("AttentionBiLSTM", True, True, 10)
-    Test("AttentionLSTM", True, False, 10)
-    Test("BiLSTM", False, True, 10)
-    Test("LSTM", False, False, 10)
+    Test("AttentionBiLSTM", True, True, 1)
+    Test("AttentionLSTM", True, False, 1)
+    Test("BiLSTM", False, True, 1)
+    Test("LSTM", False, False, 1)
